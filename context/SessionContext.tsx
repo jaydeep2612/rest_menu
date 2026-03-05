@@ -1,10 +1,10 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import React, {
-    createContext,
-    useContext,
-    useEffect,
-    useMemo,
-    useState,
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
 } from "react";
 import { SessionService } from "../services/session.service";
 
@@ -40,10 +40,13 @@ type SessionContextType = {
     price?: number,
     name?: string,
   ) => void;
+  clearCart: () => void; // Added for Cart Tab
   cartTotalQty: number;
   cartTotalPrice: number;
   menuData: any;
   setMenuData: (data: any) => void;
+  orders: any[]; // Added for Orders Tab
+  setOrders: React.Dispatch<React.SetStateAction<any[]>>; // Added for Orders Tab
 };
 
 const SessionContext = createContext<SessionContextType | undefined>(undefined);
@@ -62,6 +65,9 @@ export const SessionProvider = ({
   const [isPrimary, setIsPrimary] = useState(false); // Host vs Guest
   const [cart, setCart] = useState<Record<number, CartItem>>({});
   const [menuData, setMenuData] = useState<any>(null);
+
+  // NEW: Global Orders State
+  const [orders, setOrders] = useState<any[]>([]);
 
   // --- 1. LOAD PERSISTED STATE ON MOUNT ---
   useEffect(() => {
@@ -99,7 +105,7 @@ export const SessionProvider = ({
     AsyncStorage.setItem("cart", JSON.stringify(cart));
     AsyncStorage.setItem("isPrimary", isPrimary ? "true" : "false");
 
-    // FIX: Actively remove ghost state if status becomes null
+    // Actively remove ghost state if status becomes null
     if (joinStatus) {
       AsyncStorage.setItem("joinStatus", joinStatus);
     } else {
@@ -114,6 +120,7 @@ export const SessionProvider = ({
     joinStatus,
     isReady,
   ]);
+
   // --- 3. OPTIMIZED CART LOGIC ---
   const updateCart = (
     id: number,
@@ -136,6 +143,9 @@ export const SessionProvider = ({
       return { ...prev, [id]: { ...currentItem, qty: newQty } };
     });
   };
+
+  // NEW: Instantly clear the cart after placing an order
+  const clearCart = () => setCart({});
 
   // Calculate Totals using useMemo (O(N) operation on cart items only)
   const { cartTotalQty, cartTotalPrice } = useMemo(() => {
@@ -198,6 +208,7 @@ export const SessionProvider = ({
       setCart({});
       setIsPrimary(false);
       setJoinStatus(null);
+      setOrders([]); // NEW: Clear orders on logout
       // Note: We don't clear tableData so they don't have to rescan to try again
     }
   };
@@ -218,10 +229,13 @@ export const SessionProvider = ({
         startSession,
         clearSession,
         updateCart,
+        clearCart, // Exported
         cartTotalQty,
         cartTotalPrice,
         menuData,
         setMenuData,
+        orders, // Exported
+        setOrders, // Exported
       }}
     >
       {children}
