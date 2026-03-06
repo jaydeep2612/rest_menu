@@ -3,6 +3,7 @@ import { router } from "expo-router";
 import React, { useEffect, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Image,
   Modal,
   Platform,
@@ -17,7 +18,6 @@ import {
 import { THEME } from "../../constants/theme";
 import { useSession } from "../../context/SessionContext";
 import { SessionService } from "../../services/session.service";
-
 const DUMMY_MENU = [
   {
     id: 1,
@@ -61,6 +61,7 @@ export default function MenuScreen() {
     menuData,
     isPrimary,
     customerName,
+    clearSession,
   } = useSession();
 
   // 🔥 NEW UI STATE
@@ -256,17 +257,42 @@ export default function MenuScreen() {
       </View>
     );
   };
+  // 👈 2. ADD THIS FUNCTION
+  const handleLeaveTable = () => {
+    // 🌐 Web Fallback
+    if (Platform.OS === "web") {
+      const confirmed = window.confirm(
+        "Are you sure you want to disconnect from this table? Your cart and session will be cleared.",
+      );
+      if (confirmed) {
+        clearSession().then(() => router.replace("/"));
+      }
+      return;
+    }
 
+    // 📱 iOS & Android Native Alert
+    Alert.alert(
+      "Leave Table?",
+      "Are you sure you want to disconnect from this table? Your cart and session will be cleared.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Leave",
+          style: "destructive",
+          onPress: async () => {
+            await clearSession(); // Wipes the data
+            router.replace("/"); // Sends them back to the scanner/home screen
+          },
+        },
+      ],
+    );
+  };
   return (
     <SafeAreaView style={styles.container}>
       {/* Top App Bar */}
       <View style={styles.topBar}>
-        <TouchableOpacity style={styles.iconBtn}>
-          <MaterialIcons
-            name="arrow-back"
-            size={24}
-            color={THEME.textPrimary}
-          />
+        <TouchableOpacity style={styles.iconBtn} onPress={handleLeaveTable}>
+          <MaterialIcons name="exit-to-app" size={26} color={THEME.danger} />
         </TouchableOpacity>
 
         <View style={styles.headerCenter}>

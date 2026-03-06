@@ -1,4 +1,4 @@
-import 'dotenv/config';
+import "dotenv/config";
 
 export default {
   expo: {
@@ -12,7 +12,7 @@ export default {
     newArchEnabled: true,
 
     ios: {
-      supportsTablet: true
+      supportsTablet: true,
     },
 
     android: {
@@ -20,15 +20,15 @@ export default {
         backgroundColor: "#E6F4FE",
         foregroundImage: "./assets/images/android-icon-foreground.png",
         backgroundImage: "./assets/images/android-icon-background.png",
-        monochromeImage: "./assets/images/android-icon-monochrome.png"
+        monochromeImage: "./assets/images/android-icon-monochrome.png",
       },
       edgeToEdgeEnabled: true,
-      predictiveBackGestureEnabled: false
+      predictiveBackGestureEnabled: false,
     },
 
     web: {
       output: "static",
-      favicon: "./assets/images/favicon.png"
+      favicon: "./assets/images/favicon.png",
     },
 
     plugins: [
@@ -41,20 +41,20 @@ export default {
           resizeMode: "contain",
           backgroundColor: "#ffffff",
           dark: {
-            backgroundColor: "#000000"
-          }
-        }
-      ]
+            backgroundColor: "#000000",
+          },
+        },
+      ],
     ],
 
     experiments: {
       typedRoutes: true,
-      reactCompiler: true
+      reactCompiler: true,
     },
 
     // ✅ ADD THIS
     extra: {
-      BASE_URL: process.env.BASE_URL || "http://192.168.1.37:8000/api"
-    }
-  }
+      BASE_URL: process.env.BASE_URL || "https://rest-saas.gt.tc/api",
+    },
+  },
 };

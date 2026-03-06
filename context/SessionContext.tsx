@@ -6,8 +6,8 @@ import React, {
   useMemo,
   useState,
 } from "react";
+import { Alert, Platform } from "react-native";
 import { SessionService } from "../services/session.service";
-
 // --- TYPES ---
 export type CartItem = {
   qty: number;
@@ -179,9 +179,18 @@ export const SessionProvider = ({
       setSessionToken(data.session_token);
       setJoinStatus(data.join_status);
       setIsPrimary(data.is_primary || false);
-    } catch (e) {
+    } catch (e: any) {
       console.error("Session start failed", e);
-      throw e;
+
+      // 🔥 NEW: Cross-platform Error Popup
+      const errorMessage = e.message || "Failed to start session.";
+      if (Platform.OS === "web") {
+        window.alert(`Error: ${errorMessage}`);
+      } else {
+        Alert.alert("Session Error", errorMessage);
+      }
+
+      throw e; // Keep throwing so the UI stops loading spinners if needed
     }
   };
 
@@ -193,26 +202,26 @@ export const SessionProvider = ({
     } catch (e) {
       console.error("Failed to notify server of leave", e);
     } finally {
-      // Clear storage
+      // 🔥 CRITICAL FIX: Added "tableData" to fully wipe the device's memory
       await AsyncStorage.multiRemove([
         "sessionToken",
         "customerName",
         "cart",
         "isPrimary",
         "joinStatus",
+        "tableData",
       ]);
 
-      // Reset state
+      // Reset all state to completely blank
       setSessionToken(null);
       setCustomerName("");
       setCart({});
       setIsPrimary(false);
       setJoinStatus(null);
-      setOrders([]); // NEW: Clear orders on logout
-      // Note: We don't clear tableData so they don't have to rescan to try again
+      setOrders([]);
+      setTableData(null); // 🔥 CRITICAL FIX: Unlink the old table
     }
   };
-
   return (
     <SessionContext.Provider
       value={{
