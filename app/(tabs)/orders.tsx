@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -13,6 +13,7 @@ import {
 } from "react-native";
 import { THEME } from "../../constants/theme";
 import { useSession } from "../../context/SessionContext";
+import { initEcho } from "../../services/echo"; // 🔥 Import our new WebSocket service
 import { OrderService } from "../../services/order.service";
 import { SessionService } from "../../services/session.service";
 
@@ -20,27 +21,37 @@ export default function OrdersTab() {
   const { sessionToken, tableData, menuData, orders, setOrders } = useSession();
 
   const [loading, setLoading] = useState(true);
+  const [connectionStatus, setConnectionStatus] = useState<
+    "connecting" | "live" | "offline"
+  >("connecting");
 
-  // Connection and Sync State
-  const [isSyncing, setIsSyncing] = useState(true);
-  const [socketConnected, setSocketConnected] = useState(false);
+  const echoRef = useRef<any>(null);
+  const processedEventsRef = useRef<Set<string>>(new Set());
 
   const currency = menuData?.restaurant?.currency_symbol || "₹";
 
-  // Safely merge incoming orders without screen flickering (Sorted Newest First)
+  // Safely extract the session ID for the private channel
+  const sessionId = menuData?.session?.id || menuData?.session?.session_id;
+
   const mergeOrders = (incomingOrders: any[]) => {
     setOrders((prev) => {
       const map = new Map(prev.map((o) => [o.id, o]));
       incomingOrders.forEach((o) => map.set(o.id, o));
-      return Array.from(map.values()).sort((a, b) => b.id - a.id);
+      return Array.from(map.values())
+        .sort(
+          (a, b) =>
+            new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+        )
+        .slice(0, 50); // Keep memory usage low on mobile browsers
     });
   };
-
+  // =================================================================
+  // 1. HTTP FETCH EFFECT (Always runs to guarantee orders load)
+  // =================================================================
   useEffect(() => {
     if (!sessionToken) return;
 
     let isMounted = true;
-    let pollingInterval: ReturnType<typeof setInterval>;
     const abortController = new AbortController();
 
     const fetchOrders = async () => {
@@ -49,49 +60,98 @@ export default function OrdersTab() {
           sessionToken,
           abortController.signal,
         );
-        if (!isMounted) return;
-
-        mergeOrders(Array.isArray(data) ? data : []);
-        setIsSyncing(true);
+        if (isMounted) {
+          mergeOrders(Array.isArray(data) ? data : []);
+          setLoading(false);
+        }
       } catch (e: any) {
         if (e.name !== "AbortError" && isMounted) {
-          console.error("Sync failed", e);
-          setIsSyncing(false); // Triggers the offline banner
+          setLoading(false);
         }
-      } finally {
-        if (isMounted) setLoading(false);
       }
     };
 
-    fetchOrders(); // Initial load
-
-    // Poll every 5 seconds as a fallback to WebSockets
-    const startPolling = () => {
-      pollingInterval = setInterval(() => {
-        if (!socketConnected) fetchOrders();
-      }, 5000);
-    };
-
-    startPolling();
+    fetchOrders();
 
     return () => {
       isMounted = false;
-      abortController.abort(); // Cancel network request if user leaves tab
-      clearInterval(pollingInterval);
+      abortController.abort();
     };
-  }, [sessionToken, socketConnected]);
+  }, [sessionToken]);
+
+  // =================================================================
+  // 2. WEBSOCKET EFFECT (Only runs if we successfully get a sessionId)
+  // =================================================================
+  useEffect(() => {
+    if (!sessionToken || !sessionId) {
+      setConnectionStatus("offline");
+      return;
+    }
+
+    let isMounted = true;
+
+    // Singleton Echo Connection
+    if (!echoRef.current) {
+      echoRef.current = initEcho(sessionToken);
+    }
+    const echoInstance = echoRef.current;
+
+    // Monitor Network Status
+    echoInstance.connector.pusher.connection.bind(
+      "state_change",
+      (states: any) => {
+        if (!isMounted) return;
+        if (states.current === "connected") setConnectionStatus("live");
+        else if (states.current === "connecting")
+          setConnectionStatus("connecting");
+        else if (
+          ["disconnected", "unavailable", "failed"].includes(states.current)
+        ) {
+          setConnectionStatus("offline");
+        }
+      },
+    );
+
+    echoInstance.connector.pusher.connection.bind("error", () => {
+      if (!isMounted) return;
+      setConnectionStatus("offline");
+    });
+
+    // Subscribe to Private Channel
+    echoInstance
+      .private(`session.${sessionId}`)
+      .listen(".OrderStatusUpdated", (event: any) => {
+        if (!isMounted) return;
+
+        // Prevent duplicate processing
+        const eventId = event.event_id;
+        if (eventId) {
+          if (processedEventsRef.current.has(eventId)) return;
+          processedEventsRef.current.add(eventId);
+        }
+
+        if (event.order) {
+          mergeOrders([event.order]);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+      if (echoRef.current) {
+        echoRef.current.leave(`session.${sessionId}`);
+        echoRef.current.disconnect();
+        echoRef.current = null;
+      }
+    };
+  }, [sessionToken, sessionId]);
 
   const displayOrders = Array.isArray(orders) ? orders : [];
 
-  // Calculate totals strictly from backend values (Excluding Cancelled Orders)
   const totalBill = useMemo(
     () =>
       displayOrders.reduce((sum, order) => {
         const status = order.status?.toLowerCase() || "";
-        // Do not add cancelled/rejected orders to the total bill
-        if (status === "cancelled" || status === "rejected") {
-          return sum;
-        }
+        if (status === "cancelled" || status === "rejected") return sum;
         return sum + (parseFloat(String(order.total_amount)) || 0);
       }, 0),
     [displayOrders],
@@ -101,18 +161,23 @@ export default function OrdersTab() {
     if (!tableData?.tId || !sessionToken) return;
     try {
       await SessionService.callWaiter(tableData.tId, sessionToken);
-      Alert.alert(
-        "Waiter Notified",
-        "A staff member has been alerted and is on the way.",
-      );
+      if (Platform.OS === "web") {
+        window.alert("A staff member has been alerted and is on the way.");
+      } else {
+        Alert.alert(
+          "Waiter Notified",
+          "A staff member has been alerted and is on the way.",
+        );
+      }
     } catch (e) {
-      Alert.alert("Error", "Could not reach staff. Please try again.");
+      if (Platform.OS === "web")
+        window.alert("Could not reach staff. Please try again.");
+      else Alert.alert("Error", "Could not reach staff. Please try again.");
     }
   };
 
   const getStatusUI = (status: string) => {
     const s = status?.toLowerCase() || "";
-
     if (s === "accepted")
       return {
         color: THEME.primary,
@@ -156,7 +221,6 @@ export default function OrdersTab() {
     };
   };
 
-  // Render a single order card
   const renderOrderItem = ({ item: order }: { item: any }) => {
     const statusUI = getStatusUI(order.status);
     const isCancelled =
@@ -278,20 +342,37 @@ export default function OrdersTab() {
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Order History</Text>
-      </View>
 
-      {!isSyncing && !socketConnected && (
-        <View style={styles.offlineBanner}>
-          <Ionicons
-            name="cloud-offline-outline"
-            size={16}
-            color={THEME.cardBg}
+        {/* 🟢 Live Connection Indicator */}
+        <View
+          style={[
+            styles.statusIndicator,
+            connectionStatus === "live"
+              ? styles.bgSuccess
+              : connectionStatus === "connecting"
+                ? styles.bgWarning
+                : styles.bgDanger,
+          ]}
+        >
+          <View
+            style={[
+              styles.statusDot,
+              connectionStatus === "live"
+                ? styles.dotSuccess
+                : connectionStatus === "connecting"
+                  ? styles.dotWarning
+                  : styles.dotDanger,
+            ]}
           />
-          <Text style={styles.offlineText}>
-            Connection lost. Trying to reconnect...
+          <Text style={styles.statusIndicatorText}>
+            {connectionStatus === "live"
+              ? "Live"
+              : connectionStatus === "connecting"
+                ? "Connecting..."
+                : "Offline"}
           </Text>
         </View>
-      )}
+      </View>
 
       {loading && orders.length === 0 ? (
         <View style={styles.emptyState}>
@@ -319,6 +400,10 @@ export default function OrdersTab() {
           ListFooterComponent={renderFooter}
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
+          initialNumToRender={10}
+          maxToRenderPerBatch={10}
+          windowSize={5}
+          removeClippedSubviews={Platform.OS !== "ios"}
         />
       )}
 
@@ -341,18 +426,27 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   headerTitle: { fontSize: 20, fontWeight: "bold", color: THEME.textPrimary },
-  offlineBanner: {
+  statusIndicator: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: THEME.danger,
-    paddingVertical: 8,
-    gap: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    marginTop: 4,
   },
-  offlineText: { color: THEME.cardBg, fontSize: 13, fontWeight: "bold" },
-
+  bgSuccess: { backgroundColor: "rgba(16, 185, 129, 0.1)" },
+  bgWarning: { backgroundColor: "rgba(245, 158, 11, 0.1)" },
+  bgDanger: { backgroundColor: "rgba(239, 68, 68, 0.1)" },
+  statusDot: { width: 6, height: 6, borderRadius: 3, marginRight: 6 },
+  dotSuccess: { backgroundColor: THEME.success },
+  dotWarning: { backgroundColor: THEME.warning },
+  dotDanger: { backgroundColor: THEME.danger },
+  statusIndicatorText: {
+    fontSize: 11,
+    fontWeight: "bold",
+    color: THEME.textSecondary,
+  },
   scrollContent: { padding: 16, paddingBottom: 100 },
-
   orderCard: {
     backgroundColor: THEME.cardBg,
     padding: 16,
@@ -390,7 +484,6 @@ const styles = StyleSheet.create({
     borderRadius: 20,
   },
   statusText: { fontSize: 12, fontWeight: "bold" },
-
   itemsList: { gap: 12 },
   orderItem: {
     flexDirection: "row",
@@ -412,7 +505,6 @@ const styles = StyleSheet.create({
     fontStyle: "italic",
     marginTop: 4,
   },
-
   orderLevelNote: {
     flexDirection: "row",
     alignItems: "center",
@@ -429,7 +521,6 @@ const styles = StyleSheet.create({
     marginLeft: 8,
     flex: 1,
   },
-
   orderFooter: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -440,7 +531,6 @@ const styles = StyleSheet.create({
     borderTopColor: THEME.border,
   },
   totalText: { fontSize: 16, fontWeight: "bold", color: THEME.textPrimary },
-
   summaryCard: {
     backgroundColor: THEME.cardBg,
     padding: 20,
@@ -467,7 +557,6 @@ const styles = StyleSheet.create({
     marginTop: 8,
     fontStyle: "italic",
   },
-
   emptyState: {
     flex: 1,
     justifyContent: "center",
@@ -488,7 +577,6 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginTop: 8,
   },
-
   fab: {
     position: "absolute",
     bottom: 24,
