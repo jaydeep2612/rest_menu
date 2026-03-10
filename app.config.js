@@ -54,7 +54,8 @@ export default {
 
     // ✅ ADD THIS
     extra: {
-      BASE_URL: process.env.BASE_URL || "https://rest-saas.gt.tc/api",
+      BASE_URL:
+        process.env.BASE_URL || "https://rset-saas-api.onrender.com//api",
     },
   },
 };
