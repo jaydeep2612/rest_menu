@@ -1,7 +1,8 @@
 import Constants from "expo-constants";
 
 const BASE_URL =
-  Constants.expoConfig?.extra?.BASE_URL || "http://192.168.1.41:8000/api";
+  Constants.expoConfig?.extra?.BASE_URL ||
+  "https://restaurant.techstrota.com/api";
 
 // Custom Error Class for structured error handling
 export class ApiError extends Error {
