@@ -105,11 +105,14 @@ export default function MenuScreen() {
 
   useEffect(() => {
     let isMounted = true;
-    const sessionId = menuData?.session?.id;
-
     const setupHostListener = async () => {
-      if (!tableData?.tId || !sessionToken || !isPrimary || !sessionId) return;
+      // 🔥 FIX: Check multiple paths just in case Laravel formats the JSON differently
+      const sessionId =
+        menuData?.session?.id ||
+        menuData?.session?.session_id ||
+        menuData?.session_id;
 
+      if (!tableData?.tId || !sessionToken || !isPrimary || !sessionId) return;
       try {
         const res = await SessionService.getPendingRequests(
           tableData.tId,
@@ -215,13 +218,16 @@ export default function MenuScreen() {
   };
 
   const handleCallWaiter = () => {
+    // 🔥 NEW: Tell TypeScript to stop if the token is null!
+    if (!sessionToken) return;
+
     Alert.alert("Call Waiter", "Do you need a waiter at your table?", [
       { text: "Cancel", style: "cancel" },
       {
         text: "Yes",
         onPress: async () => {
           try {
-            await SessionService.callWaiter(sessionToken);
+            await SessionService.callWaiter(sessionToken); // Red underline is now gone!
             Alert.alert("Success", "A waiter has been notified.");
           } catch (error) {
             Alert.alert("Error", "Could not notify the waiter at this time.");
